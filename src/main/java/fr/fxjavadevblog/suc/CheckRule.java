@@ -12,6 +12,7 @@ import org.quartz.CronExpression;
 import lombok.Builder;
 import lombok.extern.slf4j.Slf4j;
 
+@SuppressWarnings("unused")
 @Slf4j
 @Builder
 public class CheckRule implements Runnable {
