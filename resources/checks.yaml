@@ -1,0 +1,26 @@
+# CHECKS
+
+google.com:
+   cron-expression: "* */1 * * * ? *"
+   url: https://www.google.com
+   method: HEAD
+   accepted-code: 200
+   timeout: 5
+   mail-recipient: fxrobin@zaclys.net
+   
+picocli.info.1:
+   cron-expression: "*/30 * * * * ? *"
+   url: https://picocli.info/quick-guide.html
+   accepted-code: 200
+   timeout: 2
+   mail-recipient: fxrobin@zaclys.net
+   
+
+
+picocli.info.2:
+   cron-expression: "*/30 * * * * ? *"
+   url: https://picocli.info/quick-guide.erreur
+   accepted-code: 200
+   timeout: 2
+   mail-recipient: fxrobin@zaclys.net        
+
