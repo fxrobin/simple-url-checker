@@ -1,42 +1,25 @@
 package fr.fxjavadevblog.suc;
 
-import io.quarkus.picocli.runtime.annotations.TopCommand;
-import lombok.extern.slf4j.Slf4j;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
-
-import static picocli.CommandLine.Command;
-
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.text.ParseException;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Stream;
 
-import javax.inject.Inject;
-import javax.json.Json;
-import javax.json.JsonObjectBuilder;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerConfigurationException;
-import javax.xml.transform.TransformerException;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.TransformerFactoryConfigurationError;
-import javax.xml.transform.dom.DOMSource;
-import javax.xml.transform.stream.StreamResult;
-
-import org.json.JSONObject;
 import org.quartz.CronExpression;
+import org.quartz.CronScheduleBuilder;
+import org.quartz.CronTrigger;
+import org.quartz.JobBuilder;
+import org.quartz.JobDataMap;
+import org.quartz.JobDetail;
 import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
 import org.quartz.SchedulerFactory;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
+import org.quartz.TriggerBuilder;
+import org.simplejavamail.api.mailer.Mailer;
+import org.simplejavamail.mailer.MailerBuilder;
 import org.yaml.snakeyaml.Yaml;
 
 import com.cronutils.descriptor.CronDescriptor;
@@ -44,8 +27,12 @@ import com.cronutils.model.CronType;
 import com.cronutils.model.definition.CronDefinition;
 import com.cronutils.model.definition.CronDefinitionBuilder;
 import com.cronutils.parser.CronParser;
-import com.jayway.jsonpath.DocumentContext;
-import com.jayway.jsonpath.JsonPath;
+
+import io.quarkus.picocli.runtime.annotations.TopCommand;
+import lombok.extern.slf4j.Slf4j;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
+
 
 @SuppressWarnings("unused")
 @TopCommand
@@ -53,69 +40,140 @@ import com.jayway.jsonpath.JsonPath;
 
 @Slf4j
 public class ApplicationCommand implements Runnable {
-	
-	
-    Scheduler scheduler; 
-	
 
-	@Option(names = { "-c", "--check" }, paramLabel = "CHECKS FILE", description = "Checks file", required = true)
-	File checksFile;
+	final static Map <String, Statistics> statistics = new HashMap<>();
+	
+	private Scheduler scheduler;
+	
+	public static Mailer mailer;
+
+	@Option(names = { "-c", "--check" }, 
+			paramLabel = "CHECKS FILE",
+			description = "Checks file", 
+			required = true)
+	private File checksFile;
+	
+	@Option(names = { "-s", "--smtp-address" }, 
+			paramLabel = "ADDRESS",
+			description = "SMTP Server Address. Default: localhost")
+	private String smtpServer;
+	
+	
+	@Option(names = { "-p", "--smtp-port" }, 
+			paramLabel = "PORT",
+			description = "SMTP Server port. Default: 25")
+	private int smtpPort = 25;
+	
+	
+	@Option(names = { "-starttls", "--use-starttls" }, 
+			paramLabel = "STARTTTLS",
+			description = "use STARTTLS. Default: true")
+	private boolean useStartTls = true;
+	
+	
+	@Option(names = { "-login", "--smtp-login" }, 
+			paramLabel = "SMTP_LOGIN",
+			description = "Login to connect to the SMTP server.")
+	private String login;
+	
+	@Option(names = { "-password", "--smtp-password" }, 
+			paramLabel = "SMTP_PASSWORD",
+			description = "Password to connect to the SMTP server.")
+	private String password;
+	
 
 	private Map<String, Object> checks;
 
 	@Override
-	public void run() 
-	{	
-		 SchedulerFactory schedFact = new org.quartz.impl.StdSchedulerFactory();
-		 try {
+	public void run() {
+		SchedulerFactory schedFact = new org.quartz.impl.StdSchedulerFactory();
+		try {
 			scheduler = schedFact.getScheduler();
-			log.info("Scheduler [OK]");
-		} catch (SchedulerException e) {
-            log.error("Scheduler not started:  {}", e.getMessage());
-		}
-				 
-		try 
-		{
+			log.info("Scheduler [READY]");
+			
+			
+			mailer = MailerBuilder
+			          .withSMTPServer(smtpServer, smtpPort)			          			        
+			          .buildMailer();			
+			mailer.testConnection();		
+			log.info("SMTP Mailer {}:{} [READY]", mailer.getServerConfig().getHost(), mailer.getServerConfig().getPort());
+			
+
 			checks = new Yaml().load(new FileInputStream(checksFile));
 			checks.forEach(this::check);
-		} catch (FileNotFoundException e) 
-		{
+			log.info("Rules [LOADED]");
+
+			scheduler.start();
+			log.info("Scheduler [ON]");
+			log.info("PRESS <ENTER> TO STOP THE SCHEDULER");
+
+			System.in.read();
+
+			scheduler.shutdown(true);
+
+			log.info("<ENTER> has been pressed. Shutdown requested.");
+			log.info("Scheduler [OFF]");
+				
+			displayStastistics();
+			
+			log.info("Bye.");
+
+		} catch (SchedulerException e) {
+			log.error("Scheduler not started:  {}", e.getMessage());
+		} catch (IOException e) {
 			log.error(e.getMessage());
-		}	
+		}
 	}
 
-	private void check(String checkKey, Object checkConfiguration) 
-	{
-		if (!(checkConfiguration instanceof Map)) throw new RuntimeException("Bad configuration");
+	private static void displayStastistics() {
 		
+		log.info("Statistics :");
+		
+		statistics.forEach((k, v) -> {
+			
+			double successRatio = (double) v.getSuccessCounter() / v.getRequestCounter() * 100;
+			log.info("- {} : {}/{} {}%", k, v.getSuccessCounter(), v.getRequestCounter(), successRatio);
+			
+		});
+
+		
+	}
+
+	private void check(String checkKey, Object checkConfiguration) {
+
+		if (!(checkConfiguration instanceof Map))
+			throw new RuntimeException("Bad configuration");
+
 		@SuppressWarnings("unchecked")
-		Map <String, Object> configuration = (Map<String, Object>) checkConfiguration;
-		
+		Map<String, Object> configuration = (Map<String, Object>) checkConfiguration;
+
 		CronExpression cronExpression;
 		try {
-			cronExpression = new CronExpression(configuration.get("cron-expression").toString());
-			String cronAsText = this.translateCron(cronExpression);
-			
-			CheckRule rule = CheckRule.builder()
-					.name(checkKey)
-					.cronExpression(cronExpression)
-					.method("GET")
-					.acceptedCode(Integer.parseInt(configuration.get("accepted-code").toString()))
-					.timeOutInSeconds(Integer.parseInt(configuration.get("timeout").toString()))
-					.url(configuration.get("url").toString())
-					.build();
+			cronExpression = new CronExpression((String) configuration.get("cron-expression"));
 
-			rule.run();
-			
-												
-			
-			
+			// Parse some expression and ask descriptor for description
+			String description = CronDescriptor.instance(Locale.UK)
+					.describe(new CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.QUARTZ))
+							.parse(cronExpression.getCronExpression()));
+
+			JobDetail jobDetail = JobBuilder.newJob(CheckRule.class).setJobData(new JobDataMap(configuration))
+					.withIdentity(checkKey).build();
+
+			CronTrigger trigger = TriggerBuilder.newTrigger().withIdentity("trigger-" + checkKey).startNow()
+					.withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)).forJob(jobDetail).build();
+
+			scheduler.scheduleJob(jobDetail, trigger);
+
+			log.info("Job and Trigger added to scheduler : {} / {}", jobDetail.getKey(), description);
+
 		} catch (ParseException e) {
-			log.error("Cron Expression Error for {}" , checkKey);
-			log.error("Expression error : {}", e.getMessage());
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (SchedulerException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
-	
-		
+
 	}
 
 	private String translateCron(CronExpression cronExpression) {
@@ -123,5 +181,5 @@ public class ApplicationCommand implements Runnable {
 		CronParser parser = new CronParser(cronDefinition);
 		CronDescriptor descriptor = CronDescriptor.instance(Locale.UK);
 		return descriptor.describe(parser.parse(cronExpression.getCronExpression()));
-	}	
+	}
 }

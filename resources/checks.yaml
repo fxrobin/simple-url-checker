@@ -1,26 +1,28 @@
 # CHECKS
 
 google.com:
-   cron-expression: "* */1 * * * ? *"
+   cron-expression: "*/5 * * * * ? *"
    url: https://www.google.com
    method: HEAD
    accepted-code: 200
    timeout: 5
-   mail-recipient: fxrobin@zaclys.net
+   headers:
+      FxJavaDevBlog-Own-Header-1: header-value-1
+      FxJavaDevBlog-Own-Header-2: header-value-2
+   email: fxrobin@zaclys.net
    
 picocli.info.1:
-   cron-expression: "*/30 * * * * ? *"
+   cron-expression: "*/8 * * * * ? *"
    url: https://picocli.info/quick-guide.html
    accepted-code: 200
    timeout: 2
-   mail-recipient: fxrobin@zaclys.net
+   email: fxrobin@zaclys.net
    
 
-
 picocli.info.2:
-   cron-expression: "*/30 * * * * ? *"
+   cron-expression: "*/10 * * * * ? *"
    url: https://picocli.info/quick-guide.erreur
    accepted-code: 200
    timeout: 2
-   mail-recipient: fxrobin@zaclys.net        
+   email: fxrobin@zaclys.net        
 
