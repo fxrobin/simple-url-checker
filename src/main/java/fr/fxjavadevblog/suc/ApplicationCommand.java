@@ -163,11 +163,8 @@ public class ApplicationCommand implements Runnable {
 
 	private static void displayStastistics() {
 		log.info("Statistics :");	
-		statistics.forEach((k, v) -> {
-			
-			double successRatio = (double) v.getSuccessCounter() / v.getRequestCounter() * 100;
-			log.info("- {} : {}/{} {}%", k, v.getSuccessCounter(), v.getRequestCounter(), successRatio);
-			
+		statistics.forEach((k, v) -> {			
+			log.info("- {} : {}/{} {}%", k, v.getSuccessCounter(), v.getRequestCounter(), v.getSuccessPercent());			
 		});
 	}
 

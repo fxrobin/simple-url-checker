@@ -20,4 +20,9 @@ class Statistics
 	{
 		requestCounter++;
 	}		
+	
+	public double getSuccessPercent()
+	{
+		return ((double) requestCounter) / successCounter * 100;
+	}
 }
