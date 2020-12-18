@@ -3,6 +3,8 @@
 google.com:
    cron-expression: "*/5 * * * * ? *"
    url: https://www.google.com
+   #login: fxrobin
+   #password: $ENV$SUC_GOOGLE_PASSWORD
    method: HEAD
    accepted-code: 200
    timeout: 5
@@ -13,6 +15,7 @@ google.com:
    
 picocli.info.1:
    cron-expression: "*/8 * * * * ? *"
+   method: GET
    url: https://picocli.info/quick-guide.html
    accepted-code: 200
    timeout: 2
@@ -22,6 +25,7 @@ picocli.info.1:
 picocli.info.2:
    cron-expression: "*/10 * * * * ? *"
    url: https://picocli.info/quick-guide.erreur
+   method: GET
    accepted-code: 200
    timeout: 2
    email: fxrobin@zaclys.net        

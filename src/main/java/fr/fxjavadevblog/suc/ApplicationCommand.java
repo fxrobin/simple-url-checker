@@ -2,6 +2,7 @@ package fr.fxjavadevblog.suc;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.text.ParseException;
 import java.util.HashMap;
@@ -19,7 +20,9 @@ import org.quartz.SchedulerException;
 import org.quartz.SchedulerFactory;
 import org.quartz.TriggerBuilder;
 import org.simplejavamail.api.mailer.Mailer;
+import org.simplejavamail.api.mailer.config.TransportStrategy;
 import org.simplejavamail.mailer.MailerBuilder;
+import org.simplejavamail.MailException;
 import org.yaml.snakeyaml.Yaml;
 
 import com.cronutils.descriptor.CronDescriptor;
@@ -65,113 +68,145 @@ public class ApplicationCommand implements Runnable {
 	private int smtpPort = 25;
 	
 	
-	@Option(names = { "-starttls", "--use-starttls" }, 
-			paramLabel = "STARTTTLS",
-			description = "use STARTTLS. Default: true")
-	private boolean useStartTls = true;
+	@Option(names = { "-t", "--smtp-transport-strategy" }, 
+			paramLabel = "STRATEGY",
+			description = "Connection Strategy for SMTP. Default: SMTP")
+	private TransportStrategy transportStrategy =  TransportStrategy.SMTP;
 	
 	
-	@Option(names = { "-login", "--smtp-login" }, 
-			paramLabel = "SMTP_LOGIN",
+	@Option(names = { "-l", "--smtp-login" }, 
+			paramLabel = "LOGIN",
 			description = "Login to connect to the SMTP server.")
 	private String login;
 	
-	@Option(names = { "-password", "--smtp-password" }, 
-			paramLabel = "SMTP_PASSWORD",
+	@Option(names = { "-d", "--smtp-password" }, 
+			paramLabel = "PASSWORD",
 			description = "Password to connect to the SMTP server.")
 	private String password;
 	
-
+	@Option(names = { "-f", "--smtp-from" }, 
+			paramLabel = "FROM",
+			description = "<From> address for generated emails.")
+	private String from;
+	
 	private Map<String, Object> checks;
 
 	@Override
 	public void run() {
-		SchedulerFactory schedFact = new org.quartz.impl.StdSchedulerFactory();
-		try {
-			scheduler = schedFact.getScheduler();
-			log.info("Scheduler [READY]");
-			
-			
-			mailer = MailerBuilder
-			          .withSMTPServer(smtpServer, smtpPort)			          			        
-			          .buildMailer();			
-			mailer.testConnection();		
-			log.info("SMTP Mailer {}:{} [READY]", mailer.getServerConfig().getHost(), mailer.getServerConfig().getPort());
-			
-
-			checks = new Yaml().load(new FileInputStream(checksFile));
-			checks.forEach(this::check);
-			log.info("Rules [LOADED]");
-
-			scheduler.start();
-			log.info("Scheduler [ON]");
-			log.info("PRESS <ENTER> TO STOP THE SCHEDULER");
-
-			System.in.read();
-
-			scheduler.shutdown(true);
-
-			log.info("<ENTER> has been pressed. Shutdown requested.");
-			log.info("Scheduler [OFF]");
-				
+		
+		try 
+		{			
+			initScheduler();		
+			initMailer();		
+			initRules();
+			startScheduler();
+			waitKeyPressed();
+			shutdownScheduler();				
 			displayStastistics();
-			
-			log.info("Bye.");
 
 		} catch (SchedulerException e) {
 			log.error("Scheduler not started:  {}", e.getMessage());
 		} catch (IOException e) {
 			log.error(e.getMessage());
 		}
+		
+	}
+	
+
+	private void initScheduler() throws SchedulerException {
+		SchedulerFactory schedFact = new org.quartz.impl.StdSchedulerFactory();
+		scheduler = schedFact.getScheduler();
+		log.info("Scheduler [READY]");
+	}
+	
+	private void startScheduler() throws SchedulerException {
+		scheduler.start();
+		log.info("Scheduler [ON]");		
 	}
 
+	private void shutdownScheduler() throws SchedulerException {
+		scheduler.shutdown(true);	
+		log.info("Scheduler [OFF]");
+	}
+	
+
+	private void initMailer() {
+		mailer = MailerBuilder
+		          .withSMTPServer(smtpServer, smtpPort, login, password)		
+		          .withTransportStrategy(transportStrategy)			          
+		          .buildMailer();
+		try {
+			mailer.testConnection();		
+			log.info("SMTP Mailer {}:{} [READY]", mailer.getServerConfig().getHost(), 
+					                              mailer.getServerConfig().getPort());
+		}
+		catch (RuntimeException ex)
+		{
+			log.error("Cannot connect to mail server");
+			mailer = null;
+		}
+	}
+
+	private void waitKeyPressed() throws IOException {
+		log.info("PRESS <ENTER> TO STOP THE SCHEDULER");
+		System.in.read();
+		log.info("<ENTER> has been pressed. Shutdown requested.");
+	}
+
+	
+	private void initRules() throws FileNotFoundException {
+		checks = new Yaml().load(new FileInputStream(checksFile));
+		checks.forEach(this::scheduleJob);
+		log.info("Rules [LOADED]");
+	}
+
+
 	private static void displayStastistics() {
-		
-		log.info("Statistics :");
-		
+		log.info("Statistics :");	
 		statistics.forEach((k, v) -> {
 			
 			double successRatio = (double) v.getSuccessCounter() / v.getRequestCounter() * 100;
 			log.info("- {} : {}/{} {}%", k, v.getSuccessCounter(), v.getRequestCounter(), successRatio);
 			
 		});
-
-		
 	}
 
-	private void check(String checkKey, Object checkConfiguration) {
+	private void scheduleJob(String checkKey, Object checkConfiguration) {
 
 		if (!(checkConfiguration instanceof Map))
 			throw new RuntimeException("Bad configuration");
 
 		@SuppressWarnings("unchecked")
 		Map<String, Object> configuration = (Map<String, Object>) checkConfiguration;
+		
+		configuration.put("configuration.from", this.from);
 
-		CronExpression cronExpression;
 		try {
-			cronExpression = new CronExpression((String) configuration.get("cron-expression"));
+			CronExpression cronExpression = new CronExpression((String) configuration.get("cron-expression"));
 
 			// Parse some expression and ask descriptor for description
-			String description = CronDescriptor.instance(Locale.UK)
-					.describe(new CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.QUARTZ))
-							.parse(cronExpression.getCronExpression()));
+			String cronDescription = this.translateCron(cronExpression);
 
-			JobDetail jobDetail = JobBuilder.newJob(CheckRule.class).setJobData(new JobDataMap(configuration))
-					.withIdentity(checkKey).build();
+			JobDetail jobDetail = JobBuilder
+					.newJob(CheckRule.class)
+					.setJobData(new JobDataMap(configuration))
+					.withIdentity(checkKey)
+					.build();
 
-			CronTrigger trigger = TriggerBuilder.newTrigger().withIdentity("trigger-" + checkKey).startNow()
-					.withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)).forJob(jobDetail).build();
+			CronTrigger trigger = TriggerBuilder
+					.newTrigger()
+					.withIdentity("trigger-" + checkKey)					
+					.withSchedule(CronScheduleBuilder.cronSchedule(cronExpression))
+					.forJob(jobDetail)
+					.startNow()
+					.build();
 
 			scheduler.scheduleJob(jobDetail, trigger);
 
-			log.info("Job and Trigger added to scheduler : {} / {}", jobDetail.getKey(), description);
+			log.info("Job and Trigger added to scheduler : {} / {}", jobDetail.getKey(), cronDescription);
 
-		} catch (ParseException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (SchedulerException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+		} catch (ParseException | SchedulerException e) {
+			log.error(e.getMessage());
 		}
 
 	}
